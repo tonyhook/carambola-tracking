@@ -1,0 +1,153 @@
+use std::{collections::{HashMap, HashSet}, io::Read};
+
+use axum::{extract::Path, http::StatusCode};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use tokio::io::AsyncWriteExt;
+
+use crate::{Cache, GLOBAL_CONFIG};
+
+pub struct TrackingV1 {
+
+}
+
+impl TrackingV1 {
+
+    pub async fn handler(
+        Path((event_connection, request_id)): Path<(u64, u64)>)
+    -> StatusCode {
+        let utc: DateTime<Utc> = Utc::now();
+        let date = utc.format("%Y%m%d").to_string();
+        let time = utc.format("%H%M").to_string();
+
+        let timestamp_report = utc.timestamp() as u64;
+        let timestamp_issue = request_id >> 32;
+
+        if timestamp_report.saturating_sub(timestamp_issue) > 86400 {
+            return StatusCode::REQUEST_TIMEOUT;
+        }
+
+        let tracking1 = timestamp_report << 32 | event_connection;
+        let tracking2 = request_id;
+
+        let dir = tokio::fs::create_dir_all(format!("{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date)).await;
+
+        match dir {
+            Ok(_) => {
+                let file = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open(format!("{}/{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date, time))
+                    .await;
+
+                match file {
+                    Ok(mut file) => {
+                        let mut tmp_buffer = [0u8; 16];
+
+                        tmp_buffer[0..8].copy_from_slice(&tracking1.to_le_bytes());
+                        tmp_buffer[8..16].copy_from_slice(&tracking2.to_le_bytes());
+                        let _ = file.write_all(&tmp_buffer).await;
+
+                        StatusCode::OK
+                    },
+                    Err(_) => {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                }
+            },
+            Err(_) => {
+                return StatusCode::INTERNAL_SERVER_ERROR;
+            }
+        }
+    }
+
+    pub async fn amend(
+        Path((from_str, to_str)): Path<(String, String)>)
+    -> StatusCode {
+        TrackingV1::collect(from_str, to_str);
+        StatusCode::OK
+    }
+
+    pub fn collect(from_str: String, to_str: String) {
+        let from = NaiveDateTime::parse_from_str(&from_str, "%Y%m%d%H%M").unwrap();
+        let mut time = from.checked_add_signed(Duration::days(-1)).unwrap();
+
+        let mut map = HashMap::<String, u32>::new();
+        let mut deduplicate = HashSet::<u128>::new();
+
+        loop {
+            let date = time.format("%Y%m%d").to_string();
+            let minute = time.format("%H%M").to_string();
+
+            let time_str = time.format("%Y%m%d%H%M").to_string();
+
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .open(format!("{}/{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date, minute));
+
+            match file {
+                Ok(mut file) => {
+                    loop {
+                        let mut buffer = [0u8; 8];
+                        match file.read_exact(&mut buffer) {
+                            Ok(_) => (),
+                            Err(_) => break,
+                        }
+                        let tracking1 = u64::from_le_bytes(buffer);
+                        match file.read_exact(&mut buffer) {
+                            Ok(_) => (),
+                            Err(_) => break,
+                        }
+                        let tracking2 = u64::from_le_bytes(buffer);
+
+                        let event = (tracking1 & 0x00000000ffffffff) >> 22;
+                        let connection = tracking1 & 0x00000000003fffff;
+
+                        let deduplicate_key: u128 = (tracking2 as u128) << 10 | event as u128;
+                        if deduplicate.contains(&deduplicate_key) {
+                            continue;
+                        }
+                        deduplicate.insert(deduplicate_key);
+
+                        if time_str >= from_str && time_str.to_string() <= to_str {
+                            let key = format!("T1{}:{}:{}", minute, connection, event);
+
+                            if map.contains_key(&key) {
+                                let value = map.get_mut(&key).unwrap();
+                                *value += 1;
+                            } else {
+                                map.insert(key, 1);
+                            }
+                        }
+                    }
+                },
+                Err(_) => ()
+            }
+
+            if time_str == to_str {
+                break;
+            }
+
+            time = time.checked_add_signed(Duration::minutes(1)).unwrap();
+        }
+
+        let cache = Cache::new(&GLOBAL_CONFIG.get().unwrap());
+
+        let connection = {
+            let cl = cache.pa.clone();
+            let rs_client = cl.lock().unwrap();
+            rs_client.get_connection()
+        };
+
+        match connection {
+            Ok(mut connection) => {
+                for (key, value) in map.iter() {
+                    let _ = redis::cmd("SET").arg(key).arg(value).query::<Option<bool>>(&mut connection);
+                }
+            },
+            Err(_) => (),
+        }
+
+    }
+
+}
