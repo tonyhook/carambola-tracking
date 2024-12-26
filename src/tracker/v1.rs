@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, io::Read};
 
-use axum::{extract::Path, http::StatusCode};
+use axum::{extract::{Path, State}, http::StatusCode};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use tokio::io::AsyncWriteExt;
 
@@ -13,6 +13,7 @@ pub struct TrackingV1 {
 impl TrackingV1 {
 
     pub async fn handler(
+        State(cache): State<Cache>,
         Path((event_connection, request_id)): Path<(u64, u64)>)
     -> StatusCode {
         let utc: DateTime<Utc> = Utc::now();
@@ -47,11 +48,9 @@ impl TrackingV1 {
                         tmp_buffer[0..8].copy_from_slice(&tracking1.to_le_bytes());
                         tmp_buffer[8..16].copy_from_slice(&tracking2.to_le_bytes());
                         let _ = file.write_all(&tmp_buffer).await;
-
-                        StatusCode::OK
                     },
                     Err(_) => {
-                        StatusCode::INTERNAL_SERVER_ERROR
+                        return StatusCode::INTERNAL_SERVER_ERROR;
                     }
                 }
             },
@@ -59,16 +58,34 @@ impl TrackingV1 {
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }
         }
-    }
 
-    pub async fn amend(
-        Path((from_str, to_str)): Path<(String, String)>)
-    -> StatusCode {
-        TrackingV1::collect(from_str, to_str);
+        let event = event_connection >> 22;
+        if event == 501 {
+            match cache.get_notification_cost(&format!("{}", request_id)) {
+                Some(price) => {
+                    let client_port = price.split(":").nth(0).unwrap().parse::<i32>().unwrap();
+                    let vendor_port = price.split(":").nth(1).unwrap().parse::<i32>().unwrap();
+                    let client_win_price = price.split(":").nth(2).unwrap().parse::<i32>().unwrap();
+                    let vendor_win_price = price.split(":").nth(3).unwrap().parse::<i32>().unwrap();
+
+                    cache.set_cost(client_port, vendor_port, client_win_price, vendor_win_price);
+                },
+                None => (),
+            }
+        }
+
         StatusCode::OK
     }
 
-    pub fn collect(from_str: String, to_str: String) {
+    pub async fn amend(
+        State(cache): State<Cache>,
+        Path((from_str, to_str)): Path<(String, String)>)
+    -> StatusCode {
+        TrackingV1::collect(cache, from_str, to_str);
+        StatusCode::OK
+    }
+
+    pub fn collect(cache: Cache, from_str: String, to_str: String) {
         let from = NaiveDateTime::parse_from_str(&from_str, "%Y%m%d%H%M").unwrap();
         let mut time = from.checked_add_signed(Duration::days(-1)).unwrap();
 
@@ -130,8 +147,6 @@ impl TrackingV1 {
 
             time = time.checked_add_signed(Duration::minutes(1)).unwrap();
         }
-
-        let cache = Cache::new(&GLOBAL_CONFIG.get().unwrap());
 
         let connection = {
             let cl = cache.pa.clone();
