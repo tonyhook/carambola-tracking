@@ -1,19 +1,26 @@
-use std::{collections::{HashMap, HashSet}, io::Read};
+use std::{collections::{HashMap, HashSet}, io::Read, sync::Arc};
 
 use axum::{extract::{Path, State}, http::StatusCode};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use tokio::io::AsyncWriteExt;
+use tokio::{fs::File, io::AsyncWriteExt, sync::Mutex};
 
 use crate::{Cache, GLOBAL_CONFIG};
 
+#[derive(Clone)]
 pub struct TrackingV1 {
-
+    pub state: Arc::<Mutex::<Option<(String, String, File)>>>,
 }
 
 impl TrackingV1 {
 
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(None)),
+        }
+    }
+
     pub async fn handler(
-        State(cache): State<Cache>,
+        State((tracking_v1, cache)): State<(TrackingV1, Cache)>,
         Path((event_connection, request_id)): Path<(u64, u64)>)
     -> StatusCode {
         let utc: DateTime<Utc> = Utc::now();
@@ -30,33 +37,52 @@ impl TrackingV1 {
         let tracking1 = timestamp_report << 32 | event_connection;
         let tracking2 = request_id;
 
-        let dir = tokio::fs::create_dir_all(format!("{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date)).await;
+        {
+            let mut current_state = tracking_v1.state.lock().await;
 
-        match dir {
-            Ok(_) => {
-                let file = tokio::fs::OpenOptions::new()
-                    .write(true)
-                    .append(true)
-                    .create(true)
-                    .open(format!("{}/{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date, time))
-                    .await;
+            let need_new = match &*current_state {
+                Some((current_date, current_time, _)) => current_date != &date || current_time != &time,
+                None => true,
+            };
 
-                match file {
-                    Ok(mut file) => {
-                        let mut tmp_buffer = [0u8; 16];
+            if need_new {
+                if let Some((_, _, file)) = current_state.as_mut() {
+                    let _ = file.shutdown().await;
+                }
 
-                        tmp_buffer[0..8].copy_from_slice(&tracking1.to_le_bytes());
-                        tmp_buffer[8..16].copy_from_slice(&tracking2.to_le_bytes());
-                        let _ = file.write_all(&tmp_buffer).await;
+                let dir = tokio::fs::create_dir_all(format!("{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date)).await;
+
+                match dir {
+                    Ok(_) => {
+                        let file = tokio::fs::OpenOptions::new()
+                            .write(true)
+                            .append(true)
+                            .create(true)
+                            .open(format!("{}/{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date, time))
+                            .await;
+
+                        match file {
+                            Ok(file) => {
+                                *current_state = Some((date.clone(), time.clone(), file));
+                            },
+                            Err(_) => {
+                                return StatusCode::INTERNAL_SERVER_ERROR;
+                            }
+                        }
                     },
                     Err(_) => {
                         return StatusCode::INTERNAL_SERVER_ERROR;
                     }
                 }
-            },
-            Err(_) => {
-                return StatusCode::INTERNAL_SERVER_ERROR;
             }
+
+            let mut tmp_buffer = [0u8; 16];
+
+            tmp_buffer[0..8].copy_from_slice(&tracking1.to_le_bytes());
+            tmp_buffer[8..16].copy_from_slice(&tracking2.to_le_bytes());
+
+            let (_, _, file) = current_state.as_mut().unwrap();
+            let _ = file.write_all(&tmp_buffer).await;
         }
 
         let event = event_connection >> 22;
@@ -78,14 +104,14 @@ impl TrackingV1 {
     }
 
     pub async fn amend(
-        State(cache): State<Cache>,
+        State((tracking_v1, cache)): State<(TrackingV1, Cache)>,
         Path((from_str, to_str)): Path<(String, String)>)
     -> StatusCode {
-        TrackingV1::collect(cache, from_str, to_str);
+        tracking_v1.collect(cache, from_str, to_str);
         StatusCode::OK
     }
 
-    pub fn collect(cache: Cache, from_str: String, to_str: String) {
+    pub fn collect(&self, cache: Cache, from_str: String, to_str: String) {
         let from = NaiveDateTime::parse_from_str(&from_str, "%Y%m%d%H%M").unwrap();
         let mut time = from.checked_add_signed(Duration::days(-1)).unwrap();
 

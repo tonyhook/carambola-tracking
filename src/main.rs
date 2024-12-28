@@ -41,9 +41,11 @@ async fn main() {
     }
 
     let cache = Cache::new(&GLOBAL_CONFIG.get().unwrap());
+    let tracking_v1 = TrackingV1::new();
 
     let sched = JobScheduler::new().await.unwrap();
     let cache_for_cron = cache.clone();
+    let tracking_v1_for_cron = tracking_v1.clone();
     let _ = sched.add(
         // Note:
         // collecting interval should equal or larger than performance interval
@@ -60,7 +62,7 @@ async fn main() {
                 let to = utc.checked_add_signed(Duration::minutes(-1)).unwrap();
                 let to_str = to.format("%Y%m%d%H%M").to_string();
 
-                TrackingV1::collect(cache_for_cron.clone(), from_str, to_str);
+                TrackingV1::collect(&tracking_v1_for_cron, cache_for_cron.clone(), from_str, to_str);
             }
         }).unwrap()
     ).await;
@@ -76,7 +78,7 @@ async fn main() {
         .route("/v1/:event_connection/:request_id", get(TrackingV1::handler))
         .route("/amend/v1/:from/:to", get(TrackingV1::amend))
         .layer(comression_layer)
-        .with_state(cache);
+        .with_state((tracking_v1, cache));
 
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", GLOBAL_CONFIG.get().unwrap().listen_address, GLOBAL_CONFIG.get().unwrap().listen_port))
         .await
