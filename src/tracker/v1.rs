@@ -151,7 +151,7 @@ impl TrackingV1 {
         let connection = {
             let cl = cache.pa.clone();
             let rs_client = cl.lock().unwrap();
-            rs_client.get_connection()
+            rs_client.get()
         };
 
         match connection {

@@ -1,22 +1,23 @@
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Timelike, Utc};
+use r2d2::Pool;
 use redis::Client;
 
 use crate::{EnvConfig, GLOBAL_CONFIG};
 
 #[derive(Clone)]
 pub struct Cache {
-    pub pa: Arc<Mutex<Client>>, // performance
-    pub na: Arc<Mutex<Client>>, // notification url & cost
+    pub pa: Arc<Mutex<Pool<Client>>>, // performance
+    pub na: Arc<Mutex<Pool<Client>>>, // notification url & cost
 }
 
 impl Cache {
 
     pub fn new(config: &EnvConfig) -> Self {
         Self {
-            pa: Arc::new(Mutex::new(redis::Client::open(config.performance_connection.clone()).unwrap())),
-            na: Arc::new(Mutex::new(redis::Client::open(config.notification_connection.clone()).unwrap())),
+            pa: Arc::new(Mutex::new(Pool::builder().build(redis::Client::open(config.performance_connection.clone()).unwrap()).unwrap())),
+            na: Arc::new(Mutex::new(Pool::builder().build(redis::Client::open(config.notification_connection.clone()).unwrap()).unwrap())),
         }
     }
 
@@ -24,7 +25,7 @@ impl Cache {
         let connection = {
             let cl = self.na.clone();
             let rs_client = cl.lock().unwrap();
-            rs_client.get_connection()
+            rs_client.get()
         };
 
         match connection {
@@ -70,7 +71,7 @@ impl Cache {
         let connection = {
             let cl = self.pa.clone();
             let rs_client = cl.lock().unwrap();
-            rs_client.get_connection()
+            rs_client.get()
         };
 
         match connection {
