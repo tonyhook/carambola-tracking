@@ -109,4 +109,31 @@ impl Cache {
         }
     }
 
+    pub fn get_bundle(&self, request_id: &String) -> Option<String> {
+        let connection = {
+            let cl = self.na.clone();
+            let rs_client = cl.lock().unwrap();
+            rs_client.get()
+        };
+
+        match connection {
+            Ok(mut connection) => {
+                let key = format!("bundle:{}", request_id);
+
+                let result = redis::cmd("GET").arg(&key).query::<Option<String>>(&mut connection);
+                match result {
+                    Ok(result) => {
+                        return result;
+                    },
+                    Err(_) => {
+                        return None;
+                    }
+                }
+            },
+            Err(_) => {
+                return None;
+            },
+        }
+    }
+
 }

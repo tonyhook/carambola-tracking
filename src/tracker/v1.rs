@@ -76,10 +76,25 @@ impl TrackingV1 {
                 }
             }
 
-            let mut tmp_buffer = [0u8; 16];
+            let mut tmp_buffer = [0u8; 64];
 
             tmp_buffer[0..8].copy_from_slice(&tracking1.to_le_bytes());
             tmp_buffer[8..16].copy_from_slice(&tracking2.to_le_bytes());
+
+            let bundle = cache.get_bundle(&tracking2.to_string());
+            match bundle {
+                Some(bundle) => {
+                    let mut bundle_bytes = bundle.as_bytes();
+                    let mut len = bundle_bytes.len();
+                    if len > 48 {
+                        bundle_bytes = &bundle_bytes[0..48];
+                        len = 48;
+                    }
+
+                    tmp_buffer[16..(16+len)].copy_from_slice(&bundle_bytes);
+                },
+                None => (),
+            }
 
             let (_, _, file) = current_state.as_mut().unwrap();
             let _ = file.write_all(&tmp_buffer).await;
@@ -132,16 +147,32 @@ impl TrackingV1 {
                 Ok(mut file) => {
                     loop {
                         let mut buffer = [0u8; 8];
+
                         match file.read_exact(&mut buffer) {
                             Ok(_) => (),
                             Err(_) => break,
                         }
                         let tracking1 = u64::from_le_bytes(buffer);
+
                         match file.read_exact(&mut buffer) {
                             Ok(_) => (),
                             Err(_) => break,
                         }
                         let tracking2 = u64::from_le_bytes(buffer);
+
+                        let mut bundle_bytes = [0u8; 48];
+                        let bundle: String;
+                        match file.read_exact(&mut bundle_bytes) {
+                            Ok(_) => (),
+                            Err(_) => break,
+                        }
+                        let mut iter = bundle_bytes.split(|&byte| byte == 0);
+                        match iter.next() {
+                            Some(slice) => {
+                                bundle = format!("{}", String::from_utf8_lossy(slice));
+                            }
+                            None => break,
+                        }
 
                         let event = (tracking1 & 0x00000000ffffffff) >> 22;
                         let connection = tracking1 & 0x00000000003fffff;
@@ -153,7 +184,7 @@ impl TrackingV1 {
                         deduplicate.insert(deduplicate_key);
 
                         if time_str >= from_str && time_str.to_string() <= to_str {
-                            let key = format!("T1{}:{}:{}", minute, connection, event);
+                            let key = format!("T1{}:{}:{}:{}", minute, connection, bundle, event);
 
                             if map.contains_key(&key) {
                                 let value = map.get_mut(&key).unwrap();
