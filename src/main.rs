@@ -16,8 +16,9 @@ use tracker::*;
 pub struct EnvConfig {
     pub storage_path: String,
 
-    pub performance_connection: String,
-    pub notification_connection: String,
+    pub performance_connection_write: String,
+    pub notification_connection_write: String,
+    pub notification_connection_read: String,
     pub performance_interval: u32,
 
     pub listen_address: String,

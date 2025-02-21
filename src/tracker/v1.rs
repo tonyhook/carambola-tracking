@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, HashSet}, io::Read, sync::Arc};
 
 use axum::{extract::{Path, State}, http::StatusCode};
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Timelike, Utc};
 use tokio::{fs::File, io::AsyncWriteExt, sync::Mutex};
 
 use crate::{Cache, GLOBAL_CONFIG};
@@ -130,18 +130,19 @@ impl TrackingV1 {
         let from = NaiveDateTime::parse_from_str(&from_str, "%Y%m%d%H%M").unwrap();
         let mut time = from.checked_add_signed(Duration::days(-1)).unwrap();
 
-        let mut map = HashMap::<String, u32>::new();
+        let mut map = HashMap::<(u32, u32, u64, String, u64), u32>::new();
         let mut deduplicate = HashSet::<u128>::new();
 
         loop {
             let date = time.format("%Y%m%d").to_string();
-            let minute = time.format("%H%M").to_string();
+            let hour = time.hour();
+            let minute = time.minute();
 
             let time_str = time.format("%Y%m%d%H%M").to_string();
 
             let file = std::fs::OpenOptions::new()
                 .read(true)
-                .open(format!("{}/{}/{}", GLOBAL_CONFIG.get().unwrap().storage_path, date, minute));
+                .open(format!("{}/{:0>2}/{:0>2}{:0>2}", GLOBAL_CONFIG.get().unwrap().storage_path, date, hour, minute));
 
             match file {
                 Ok(mut file) => {
@@ -184,7 +185,7 @@ impl TrackingV1 {
                         deduplicate.insert(deduplicate_key);
 
                         if time_str >= from_str && time_str.to_string() <= to_str {
-                            let key = format!("T1{}:{}:{}:{}", minute, connection, bundle, event);
+                            let key = (hour, minute, connection, bundle, event);
 
                             if map.contains_key(&key) {
                                 let value = map.get_mut(&key).unwrap();
@@ -205,21 +206,9 @@ impl TrackingV1 {
             time = time.checked_add_signed(Duration::minutes(1)).unwrap();
         }
 
-        let connection = {
-            let cl = cache.pa.clone();
-            let rs_client = cl.lock().unwrap();
-            rs_client.get()
-        };
-
-        match connection {
-            Ok(mut connection) => {
-                for (key, value) in map.iter() {
-                    let _ = redis::cmd("SET").arg(key).arg(value).query::<Option<bool>>(&mut connection);
-                }
-            },
-            Err(_) => (),
+        for (key, &value) in map.iter() {
+            cache.set_tracking(key.0, key.1, key.2, &key.3, key.4, value);
         }
-
     }
 
 }
