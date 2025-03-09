@@ -36,6 +36,7 @@ impl TrackingV1 {
 
         let tracking1 = timestamp_report << 32 | event_connection;
         let tracking2 = request_id;
+        let bundle = cache.get_bundle(&tracking2.to_string()).unwrap_or("UNKNOWN".to_string());
 
         {
             let mut current_state = tracking_v1.state.lock().await;
@@ -81,20 +82,14 @@ impl TrackingV1 {
             tmp_buffer[0..8].copy_from_slice(&tracking1.to_le_bytes());
             tmp_buffer[8..16].copy_from_slice(&tracking2.to_le_bytes());
 
-            let bundle = cache.get_bundle(&tracking2.to_string());
-            match bundle {
-                Some(bundle) => {
-                    let mut bundle_bytes = bundle.as_bytes();
-                    let mut len = bundle_bytes.len();
-                    if len > 48 {
-                        bundle_bytes = &bundle_bytes[0..48];
-                        len = 48;
-                    }
-
-                    tmp_buffer[16..(16+len)].copy_from_slice(&bundle_bytes);
-                },
-                None => (),
+            let mut bundle_bytes = bundle.as_bytes();
+            let mut len = bundle_bytes.len();
+            if len > 48 {
+                bundle_bytes = &bundle_bytes[0..48];
+                len = 48;
             }
+
+            tmp_buffer[16..(16+len)].copy_from_slice(&bundle_bytes);
 
             let (_, _, file) = current_state.as_mut().unwrap();
             let _ = file.write_all(&tmp_buffer).await;
@@ -109,7 +104,7 @@ impl TrackingV1 {
                     let client_win_price = price.split(":").nth(2).unwrap().parse::<i32>().unwrap();
                     let vendor_win_price = price.split(":").nth(3).unwrap().parse::<i32>().unwrap();
 
-                    cache.set_cost(client_port, vendor_port, client_win_price, vendor_win_price);
+                    cache.update_cost(client_port, vendor_port, &bundle, client_win_price, vendor_win_price);
                 },
                 None => (),
             }

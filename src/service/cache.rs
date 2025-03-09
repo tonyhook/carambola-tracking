@@ -25,24 +25,25 @@ impl Cache {
 
     // performance
 
-    pub fn set_cost(&self, client_port: i32, vendor_port: i32, income: i32, outcome: i32) {
+    pub fn update_cost(&self, client_port: i32, vendor_port: i32, bundle: &String, income: i32, outcome: i32) {
         let cache = self.clone();
+        let bundle = Arc::new(bundle.to_string());
         tokio::spawn({
             async move {
-                cache.set_cost_async(client_port, vendor_port, income, outcome).await;
+                cache.update_cost_async(client_port, vendor_port, &bundle, income, outcome).await;
             }
         });
     }
 
-    async fn set_cost_async(&self, client_port: i32, vendor_port: i32, income: i32, outcome: i32) {
+    async fn update_cost_async(&self, client_port: i32, vendor_port: i32, bundle: &String, income: i32, outcome: i32) {
         let utc: DateTime<Utc> = Utc::now();
         let hour = utc.hour();
         let minute_aligned = utc.minute() / GLOBAL_CONFIG.get().unwrap().performance_interval * GLOBAL_CONFIG.get().unwrap().performance_interval;
         let minute_fragment = utc.minute() - minute_aligned;
         let second = utc.second();
 
-        let key_income = format!("CI{:0>2}{:0>2}:{}:{}", hour, minute_aligned, client_port, vendor_port);
-        let key_outcome = format!("CO{:0>2}{:0>2}:{}:{}", hour, minute_aligned, client_port, vendor_port);
+        let key_income = format!("CI{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
+        let key_outcome = format!("CO{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
         let expire = 86400 - minute_fragment * 60 - second - GLOBAL_CONFIG.get().unwrap().performance_interval * 60;
 
         let connection = self.pw.get();
