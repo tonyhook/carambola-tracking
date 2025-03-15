@@ -9,7 +9,7 @@ edition = "2021"
 axum = { version = "0.8.1", features = ["macros"] }
 chrono = "0.4.39"
 r2d2 = "0.8.10"
-redis = { version = "0.29.1", features = ["aio", "r2d2", "tokio-comp"] }
+redis = { version = "0.29.1", features = ["aio", "disable-client-setinfo", "r2d2", "tokio-comp"] }
 serde = { version = "1.0.217", features = ["derive"] }
 serde_yaml = "0.9.34+deprecated"
 tokio = { version = "1.42.0", features = ["full"] }
