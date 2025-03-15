@@ -7,7 +7,7 @@ use axum::{routing::get, Router};
 use chrono::{DateTime, Duration, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio_cron_scheduler::{Job, JobScheduler};
-use tower_http::compression::CompressionLayer;
+use tower_http::{compression::CompressionLayer, decompression::RequestDecompressionLayer};
 
 use service::*;
 use tracker::*;
@@ -74,11 +74,17 @@ async fn main() {
         .deflate(true)
         .gzip(true)
         .zstd(true);
+    let decomression_layer: RequestDecompressionLayer = RequestDecompressionLayer::new()
+        .br(true)
+        .deflate(true)
+        .gzip(true)
+        .zstd(true);
 
     let app = Router::new()
-        .route("/v1/:event_connection/:request_id", get(TrackingV1::handler))
-        .route("/amend/v1/:from/:to", get(TrackingV1::amend))
+        .route("/v1/{event_connection}/{request_id}", get(TrackingV1::handler))
+        .route("/amend/v1/{from}/{to}", get(TrackingV1::amend))
         .layer(comression_layer)
+        .layer(decomression_layer)
         .with_state((tracking_v1, cache));
 
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", GLOBAL_CONFIG.get().unwrap().listen_address, GLOBAL_CONFIG.get().unwrap().listen_port))
