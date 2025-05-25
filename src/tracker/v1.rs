@@ -101,10 +101,12 @@ impl TrackingV1 {
                 Some(price) => {
                     let client_port = price.split(":").nth(0).unwrap().parse::<i32>().unwrap();
                     let vendor_port = price.split(":").nth(1).unwrap().parse::<i32>().unwrap();
-                    let client_win_price = price.split(":").nth(2).unwrap().parse::<i32>().unwrap();
-                    let vendor_win_price = price.split(":").nth(3).unwrap().parse::<i32>().unwrap();
+                    let income = price.split(":").nth(2).unwrap().parse::<i32>().unwrap();
+                    let outcome_downstream = price.split(":").nth(3).unwrap().parse::<f64>().unwrap();
+                    let outcome_upstream = price.split(":").nth(4).unwrap().parse::<f64>().unwrap();
+                    let outcome_rebate = price.split(":").nth(5).unwrap().parse::<f64>().unwrap();
 
-                    cache.update_cost(client_port, vendor_port, &bundle, client_win_price, vendor_win_price);
+                    cache.update_cost(client_port, vendor_port, &bundle, income, outcome_upstream, outcome_rebate, outcome_downstream);
                 },
                 None => (),
             }

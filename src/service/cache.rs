@@ -25,17 +25,17 @@ impl Cache {
 
     // performance
 
-    pub fn update_cost(&self, client_port: i32, vendor_port: i32, bundle: &String, income: i32, outcome: i32) {
+    pub fn update_cost(&self, client_port: i32, vendor_port: i32, bundle: &String, income: i32, outcome_upstream: f64, outcome_rebate: f64, outcome_downstream: f64) {
         let cache = self.clone();
         let bundle = Arc::new(bundle.to_string());
         tokio::spawn({
             async move {
-                cache.update_cost_async(client_port, vendor_port, &bundle, income, outcome).await;
+                cache.update_cost_async(client_port, vendor_port, &bundle, income, outcome_upstream, outcome_rebate, outcome_downstream).await;
             }
         });
     }
 
-    async fn update_cost_async(&self, client_port: i32, vendor_port: i32, bundle: &String, income: i32, outcome: i32) {
+    async fn update_cost_async(&self, client_port: i32, vendor_port: i32, bundle: &String, income: i32, outcome_upstream: f64, outcome_rebate: f64, outcome_downstream: f64) {
         let utc: DateTime<Utc> = Utc::now();
         let hour = utc.hour();
         let minute_aligned = utc.minute() / GLOBAL_CONFIG.get().unwrap().performance_interval * GLOBAL_CONFIG.get().unwrap().performance_interval;
@@ -43,7 +43,9 @@ impl Cache {
         let second = utc.second();
 
         let key_income = format!("CI{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
-        let key_outcome = format!("CO{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
+        let key_outcome_upstream = format!("CU{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
+        let key_outcome_rebate = format!("CR{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
+        let key_outcome_downstream = format!("CD{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
         let expire = 86400 - minute_fragment * 60 - second - GLOBAL_CONFIG.get().unwrap().performance_interval * 60;
 
         let connection = self.pw.get();
@@ -63,21 +65,49 @@ impl Cache {
                         }
                     },
                     Err(_) => (),
-                }
-                let result = redis::cmd("INCRBY").arg(&key_outcome).arg(&outcome).query::<Option<i32>>(&mut connection);
+                };
+                let result = redis::cmd("INCRBYFLOAT").arg(&key_outcome_upstream).arg(&outcome_upstream).query::<Option<f64>>(&mut connection);
                 match result {
                     Ok(result) => {
                         match result {
                             Some(result) => {
-                                if result == outcome {
-                                    let _ = redis::cmd("EXPIRE").arg(&key_outcome).arg(expire).query::<Option<u32>>(&mut connection);
+                                if result == outcome_upstream {
+                                    let _ = redis::cmd("EXPIRE").arg(&key_outcome_upstream).arg(expire).query::<Option<u32>>(&mut connection);
                                 }
                             },
                             None => (),
                         }
                     },
                     Err(_) => (),
-                }
+                };
+                let result = redis::cmd("INCRBYFLOAT").arg(&key_outcome_rebate).arg(&outcome_rebate).query::<Option<f64>>(&mut connection);
+                match result {
+                    Ok(result) => {
+                        match result {
+                            Some(result) => {
+                                if result == outcome_rebate {
+                                    let _ = redis::cmd("EXPIRE").arg(&key_outcome_rebate).arg(expire).query::<Option<u32>>(&mut connection);
+                                }
+                            },
+                            None => (),
+                        }
+                    },
+                    Err(_) => (),
+                };
+                let result = redis::cmd("INCRBYFLOAT").arg(&key_outcome_downstream).arg(&outcome_downstream).query::<Option<f64>>(&mut connection);
+                match result {
+                    Ok(result) => {
+                        match result {
+                            Some(result) => {
+                                if result == outcome_downstream {
+                                    let _ = redis::cmd("EXPIRE").arg(&key_outcome_downstream).arg(expire).query::<Option<u32>>(&mut connection);
+                                }
+                            },
+                            None => (),
+                        }
+                    },
+                    Err(_) => (),
+                };
             },
             Err(_) => (),
         }
