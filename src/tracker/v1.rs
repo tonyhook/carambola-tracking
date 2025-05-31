@@ -1,10 +1,10 @@
 use std::{collections::{HashMap, HashSet}, io::Read, sync::Arc};
 
 use axum::{extract::{Path, State}, http::StatusCode};
-use chrono::{DateTime, Duration, NaiveDateTime, Timelike, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, Timelike, Utc};
 use tokio::{fs::File, io::AsyncWriteExt, sync::Mutex};
 
-use crate::{Cache, GLOBAL_CONFIG};
+use crate::{entity::TC_INDICATOR_COST, service::Database, Cache, GLOBAL_CONFIG};
 
 #[derive(Clone)]
 pub struct TrackingV1 {
@@ -20,7 +20,7 @@ impl TrackingV1 {
     }
 
     pub async fn handler(
-        State((tracking_v1, cache)): State<(TrackingV1, Cache)>,
+        State((tracking_v1, database, cache)): State<(TrackingV1, Database, Cache)>,
         Path((event_connection, request_id)): Path<(u64, u64)>)
     -> StatusCode {
         let utc: DateTime<Utc> = Utc::now();
@@ -107,6 +107,65 @@ impl TrackingV1 {
                     let outcome_rebate = price.split(":").nth(5).unwrap().parse::<f64>().unwrap();
 
                     cache.update_cost(client_port, vendor_port, &bundle, income, outcome_upstream, outcome_rebate, outcome_downstream);
+
+                    let time = Utc::now().with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap());
+
+                    let tc_keys: [(i32, i32, String); 4] = [
+                        (-1, -1, "".to_string()),
+                        (client_port, -1, "".to_string()),
+                        (client_port, vendor_port, "".to_string()),
+                        (client_port, vendor_port, bundle.clone()),
+                    ];
+
+                    let tcs = {
+                        let tcl = database.tcla.clone();
+                        let tc = tcl.read().unwrap();
+                        tc_keys.iter().flat_map(|(cp, vp, b)| {
+                            match tc.get(&format!("{}|{}|{}", cp, vp, b)) {
+                                Some(tcs) => tcs.clone(),
+                                None => Vec::new(),
+                            }
+                        }).collect::<Vec<_>>()
+                    };
+
+                    for tc in &tcs {
+                        let indicator = tc.indicator;
+                        let period = tc.period;
+
+                        if indicator == TC_INDICATOR_COST {
+                            cache.set_traffic_control_amount(time, tc.client_port, tc.vendor_port, &tc.bundle, indicator, period, income.into());
+                        }
+                    }
+
+                    let afs = {
+                        let afl = database.afla.clone();
+                        let af = afl.read().unwrap();
+
+                        let afs = af.get(&format!("{}", client_port));
+
+                        match afs {
+                            Some(afs) => {
+                                afs.clone()
+                            },
+                            None => {
+                                [].to_vec()
+                            },
+                        }
+                    };
+
+                    for af in &afs {
+                        if af.rule == "IMP_PER_ID" {
+                            let ids = cache.get_ids(&format!("{}", request_id));
+                            match ids {
+                                Some(ids) => {
+                                    for id in ids {
+                                        cache.set_anti_fraud_amount(time, client_port, af.period, &af.rule, &id, 1);
+                                    }
+                                },
+                                None => (),
+                            }
+                        }
+                    }
                 },
                 None => (),
             }
@@ -116,7 +175,7 @@ impl TrackingV1 {
     }
 
     pub async fn amend(
-        State((tracking_v1, cache)): State<(TrackingV1, Cache)>,
+        State((tracking_v1, _database, cache)): State<(TrackingV1, Database, Cache)>,
         Path((from_str, to_str)): Path<(String, String)>)
     -> StatusCode {
         tracking_v1.collect(cache, from_str, to_str);

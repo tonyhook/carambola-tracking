@@ -1,3 +1,4 @@
+mod entity;
 mod service;
 mod tracker;
 
@@ -16,9 +17,13 @@ use tracker::*;
 pub struct EnvConfig {
     pub storage_path: String,
 
+    pub db_connection: String,
+
     pub performance_connection_write: String,
     pub notification_connection_write: String,
     pub notification_connection_read: String,
+    pub trafficcontrol_connection_write: String,
+    pub antifraud_connection_write: String,
     pub performance_interval: u32,
 
     pub listen_address: String,
@@ -41,8 +46,20 @@ async fn main() {
         Err(_) => panic!("Could not get configuration!"),
     }
 
+    let database = Database::new(&GLOBAL_CONFIG.get().unwrap().db_connection);
     let cache = Cache::new(&GLOBAL_CONFIG.get().unwrap());
     let tracking_v1 = TrackingV1::new();
+
+    let sched_db = JobScheduler::new().await.unwrap();
+    let database_for_cron = database.clone();
+    let _ = sched_db.add(
+        Job::new("0/2 * * * * *", {
+            move |_uuid, _lock| {
+                database_for_cron.get_connections();
+            }
+        }).unwrap()
+    ).await;
+    sched_db.start().await.unwrap();
 
     let sched = JobScheduler::new().await.unwrap();
     let cache_for_cron = cache.clone();
@@ -85,7 +102,7 @@ async fn main() {
         .route("/amend/v1/{from}/{to}", get(TrackingV1::amend))
         .layer(comression_layer)
         .layer(decomression_layer)
-        .with_state((tracking_v1, cache));
+        .with_state((tracking_v1, database, cache));
 
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", GLOBAL_CONFIG.get().unwrap().listen_address, GLOBAL_CONFIG.get().unwrap().listen_port))
         .await
