@@ -2,13 +2,14 @@ mod entity;
 mod service;
 mod tracker;
 
-use std::{fs::File, sync::OnceLock};
+use std::{fs::File, io::Read, sync::OnceLock};
 
 use axum::{routing::get, Router};
 use chrono::{DateTime, Duration, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::{compression::CompressionLayer, decompression::RequestDecompressionLayer};
+use yaml_rust2::YamlLoader;
 
 use service::*;
 use tracker::*;
@@ -24,6 +25,7 @@ pub struct EnvConfig {
     pub notification_connection_read: String,
     pub trafficcontrol_connection_write: String,
     pub antifraud_connection_write: String,
+
     pub performance_interval: u32,
 
     pub listen_address: String,
@@ -32,9 +34,30 @@ pub struct EnvConfig {
 
 impl EnvConfig {
     fn new() -> Self {
-        let file = File::open("tracking.yml").unwrap();
-        serde_yaml::from_reader(file)
-            .expect("tracking.yml read failed!")
+        let mut file = File::open("tracking.yml").unwrap();
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer).expect("Failed to read tracking.yml");
+
+        let docs = YamlLoader::load_from_str(&buffer)
+            .expect("tracking.yml parsing failed!");
+        let yaml = &docs[0];
+
+        EnvConfig {
+            storage_path: yaml["storage_path"].as_str().unwrap_or("").to_string(),
+
+            db_connection: yaml["db_connection"].as_str().unwrap_or("").to_string(),
+
+            performance_connection_write: yaml["performance_connection_write"].as_str().unwrap_or("").to_string(),
+            notification_connection_write: yaml["notification_connection_write"].as_str().unwrap_or("").to_string(),
+            notification_connection_read: yaml["notification_connection_read"].as_str().unwrap_or("").to_string(),
+            trafficcontrol_connection_write: yaml["trafficcontrol_connection_write"].as_str().unwrap_or("").to_string(),
+            antifraud_connection_write: yaml["antifraud_connection_write"].as_str().unwrap_or("").to_string(),
+
+            performance_interval: yaml["performance_interval"].as_i64().unwrap_or(0) as u32,
+
+            listen_address: yaml["listen_address"].as_str().unwrap_or("").to_string(),
+            listen_port: yaml["listen_port"].as_i64().unwrap_or(0).to_string(),
+        }
     }
 }
 static GLOBAL_CONFIG: OnceLock<EnvConfig> = OnceLock::new();
