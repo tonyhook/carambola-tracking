@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::Read, sync::Arc};
+use std::{collections::HashMap, io::Read, sync::Arc};
 
 use axum::{extract::{Path, State}, http::StatusCode};
 use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, Timelike, Utc};
@@ -187,7 +187,7 @@ impl TrackingV1 {
         let mut time = from.checked_add_signed(Duration::days(-1)).unwrap();
 
         let mut map = HashMap::<(u32, u32, u64, String, u64), u32>::new();
-        let mut deduplicate = HashSet::<u128>::new();
+        // let mut deduplicate = HashSet::<u128>::new();
 
         loop {
             let date = time.format("%Y%m%d").to_string();
@@ -215,7 +215,7 @@ impl TrackingV1 {
                             Ok(_) => (),
                             Err(_) => break,
                         }
-                        let tracking2 = u64::from_le_bytes(buffer);
+                        // let tracking2 = u64::from_le_bytes(buffer);
 
                         let mut bundle_bytes = [0u8; 48];
                         let bundle: String;
@@ -234,11 +234,11 @@ impl TrackingV1 {
                         let event = (tracking1 & 0x00000000ffffffff) >> 22;
                         let connection = tracking1 & 0x00000000003fffff;
 
-                        let deduplicate_key: u128 = (tracking2 as u128) << 10 | event as u128;
-                        if deduplicate.contains(&deduplicate_key) {
-                            continue;
-                        }
-                        deduplicate.insert(deduplicate_key);
+                        // let deduplicate_key: u128 = (tracking2 as u128) << 10 | event as u128;
+                        // if deduplicate.contains(&deduplicate_key) {
+                        //     continue;
+                        // }
+                        // deduplicate.insert(deduplicate_key);
 
                         if time_str >= from_str && time_str.to_string() <= to_str {
                             let key = (hour, minute, connection, bundle, event);
