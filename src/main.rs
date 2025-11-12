@@ -91,13 +91,13 @@ async fn main() {
         // Note:
         // collecting interval should equal or larger than performance interval
         // postpone should less than collecting interval
-        Job::new("15 0/15 * * * *", {
+        Job::new("5 0/3 * * * *", {
             move |_uuid, _lock| {
                 let mut utc: DateTime<Utc> = Utc::now();
                 let minute_aligned = utc.minute() / GLOBAL_CONFIG.get().unwrap().performance_interval * GLOBAL_CONFIG.get().unwrap().performance_interval;
                 utc = utc.with_minute(minute_aligned).unwrap();
 
-                let from = utc.checked_add_signed(Duration::minutes(-15)).unwrap();
+                let from = utc.checked_add_signed(Duration::minutes(-3)).unwrap();
                 let from_str = from.format("%Y%m%d%H%M").to_string();
 
                 let to = utc.checked_add_signed(Duration::minutes(-1)).unwrap();
