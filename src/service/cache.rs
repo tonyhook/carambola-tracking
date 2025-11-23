@@ -50,7 +50,7 @@ impl Cache {
         let key_outcome_upstream = format!("CU{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
         let key_outcome_rebate = format!("CR{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
         let key_outcome_downstream = format!("CD{:0>2}{:0>2}:{}:{}:{}", hour, minute_aligned, client_port, vendor_port, bundle.replace(":", "_"));
-        let expire = 86400 - minute_fragment * 60 - second - GLOBAL_CONFIG.get().unwrap().performance_interval * 60;
+        let expire = 14400 - minute_fragment * 60 - second - GLOBAL_CONFIG.get().unwrap().performance_interval * 60;
 
         let connection = self.pw.get();
 
@@ -133,7 +133,7 @@ impl Cache {
         match connection {
             Ok(mut connection) => {
                 let key = format!("T1{:0>2}{:0>2}:{}:{}:{}", hour, minute, connection_id, bundle.replace(":", "_"), event);
-                let expire = 86400 - GLOBAL_CONFIG.get().unwrap().performance_interval * 60;
+                let expire = 14400 - GLOBAL_CONFIG.get().unwrap().performance_interval * 60;
 
                 let result = redis::cmd("SET").arg(&key).arg(value).query::<Option<String>>(&mut connection);
                 match result {
